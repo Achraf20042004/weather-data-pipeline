@@ -1,0 +1,8 @@
+version: 2
+
+sources:
+  - name: dev
+    schema: dev
+    tables:
+      - name: raw_weather_data
+        description: "Raw Weatherstack readings inserted by insert_records.py"

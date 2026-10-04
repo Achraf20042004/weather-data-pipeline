@@ -1,0 +1,139 @@
+x-db-env: &db-env # connexion a la base "warehouse" (donnees meteo)
+  DB_HOST: db
+  DB_PORT: "5432"
+  DB_NAME: ${POSTGRES_DB}
+  DB_USER: ${POSTGRES_USER}
+  DB_PASSWORD: ${POSTGRES_PASSWORD}
+
+x-superset-env: &superset-env
+  SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY}
+  SUPERSET_DATABASE_URI: postgresql+psycopg2://superset:superset@db:5432/superset_db
+  SUPERSET_ADMIN_USER: ${SUPERSET_ADMIN_USER}
+  SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD}
+  WAREHOUSE_URI: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+
+services:
+  db:
+    container_name: postgres_container
+    image: postgres:14.20
+    ports:
+      - 5000:5432 # port local 5000 -> port postgres 5432 du conteneur
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      # executes au premier demarrage uniquement (volume vide)
+      - ./postgres/airflow_init.sql:/docker-entrypoint-initdb.d/01_airflow_init.sql:ro
+      - ./postgres/superset_init.sql:/docker-entrypoint-initdb.d/02_superset_init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - my-network
+
+  af:
+    container_name: airflow_container
+    build: ./airflow
+    image: weather-airflow:2.9.3
+    ports:
+      - 8000:8080
+    environment:
+      <<: *db-env
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@db:5432/airflow_db
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      _AIRFLOW_DB_MIGRATE: "true"
+      _AIRFLOW_WWW_USER_CREATE: "true"
+      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_ADMIN_USER}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD}
+      WEATHERSTACK_API_KEY: ${WEATHERSTACK_API_KEY}
+      WEATHER_CITY: ${WEATHER_CITY}
+      USE_MOCK_DATA: ${USE_MOCK_DATA}
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./api-request:/opt/airflow/api-request
+      - ./dbt:/opt/airflow/dbt
+    command: standalone
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - my-network
+
+  dbt: # execution manuelle : docker compose run --rm dbt build
+    container_name: dbt_container
+    image: ghcr.io/dbt-labs/dbt-postgres:1.9.latest
+    profiles: ["dbt"]
+    working_dir: /usr/app
+    environment: *db-env
+    volumes:
+      - ./dbt/my_project:/usr/app
+      - ./dbt/profiles.yml:/root/.dbt/profiles.yml:ro
+    command: build
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - my-network
+
+  redis:
+    container_name: redis_container
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - my-network
+
+  superset-init: # one-shot : migrations + admin + connexion a la base meteo
+    container_name: superset_init
+    build: ./superset
+    image: weather-superset:4.1.1
+    environment: *superset-env
+    volumes:
+      - ./superset/superset_config.py:/app/pythonpath/superset_config.py:ro
+    command: >
+      bash -c "superset db upgrade &&
+      (superset fab create-admin --username $$SUPERSET_ADMIN_USER --firstname Admin --lastname User
+      --email admin@example.com --password $$SUPERSET_ADMIN_PASSWORD || true) &&
+      superset init &&
+      superset set-database-uri -d weather_db -u $$WAREHOUSE_URI"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - my-network
+
+  superset:
+    container_name: superset_container
+    build: ./superset
+    image: weather-superset:4.1.1
+    ports:
+      - 8088:8088
+    environment: *superset-env
+    volumes:
+      - ./superset/superset_config.py:/app/pythonpath/superset_config.py:ro
+    depends_on:
+      superset-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    networks:
+      - my-network
+
+volumes:
+  pg_data:
+
+networks:
+  my-network:
+    driver: bridge

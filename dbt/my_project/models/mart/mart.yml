@@ -1,0 +1,15 @@
+version: 2
+
+models:
+  - name: daily_average
+    description: "Daily average temperature and wind speed per city"
+    columns:
+      - name: city
+        tests: [not_null]
+      - name: date
+        tests: [not_null]
+  - name: weather_report
+    description: "Hourly weather readings exposed to Superset"
+    columns:
+      - name: city
+        tests: [not_null]

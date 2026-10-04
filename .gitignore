@@ -1,0 +1,21 @@
+# secrets
+.env
+
+# donnees locales PostgreSQL
+postgres/data/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# dbt
+dbt/my_project/target/
+dbt/my_project/logs/
+dbt/my_project/dbt_packages/
+dbt/.user.yml
+logs/
+
+# notes personnelles
+Notes.txt
+*.pptx

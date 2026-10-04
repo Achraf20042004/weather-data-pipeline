@@ -1,0 +1,12 @@
+version: 2
+
+models:
+  - name: stg_weather_data
+    description: "Cleaned weather readings, one row per city and hour"
+    columns:
+      - name: id
+        tests: [unique, not_null]
+      - name: city
+        tests: [not_null]
+      - name: weather_time_local
+        tests: [not_null]
